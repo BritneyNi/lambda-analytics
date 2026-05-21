@@ -1,0 +1,129 @@
+version: "3.9"
+
+# ─── Red interna ──────────────────────────────────────────────────────────────
+networks:
+  lambda_net:
+    driver: bridge
+
+# ─── Volúmenes persistentes ───────────────────────────────────────────────────
+volumes:
+  postgres_data:
+  redis_data:
+  static_files:
+
+# ─── Servicios ────────────────────────────────────────────────────────────────
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  db:
+    image: postgres:15-alpine
+    container_name: lambda_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-lambda_dashboard}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"           # Exponer solo en desarrollo; quitar en producción
+    networks:
+      - lambda_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-lambda_dashboard}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: lambda_redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"           # Solo desarrollo
+    networks:
+      - lambda_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── Django Backend ──────────────────────────────────────────────────────────
+  web:
+    build:
+      context: ../backend
+      dockerfile: ../infra/Dockerfile
+      target: runtime
+    container_name: lambda_web
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - static_files:/app/staticfiles
+    ports:
+      - "8000:8000"
+    networks:
+      - lambda_net
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Migrar y luego arrancar
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             gunicorn config.wsgi:application
+               --bind 0.0.0.0:8000
+               --workers 4
+               --worker-class gthread
+               --threads 2
+               --worker-tmp-dir /dev/shm
+               --timeout 60
+               --access-logfile -
+               --error-logfile -"
+
+  # ── Celery Worker (para reportes asincrónicos) ──────────────────────────────
+  worker:
+    build:
+      context: ../backend
+      dockerfile: ../infra/Dockerfile
+      target: runtime
+    container_name: lambda_worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DB_HOST: db
+      REDIS_URL: redis://redis:6379/0
+    networks:
+      - lambda_net
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A config worker --loglevel=info --concurrency=2
+
+  # ── Nginx (proxy + estáticos) ───────────────────────────────────────────────
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: lambda_nginx
+    restart: unless-stopped
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - static_files:/var/www/static:ro
+    ports:
+      - "80:80"
+    networks:
+      - lambda_net
+    depends_on:
+      - web

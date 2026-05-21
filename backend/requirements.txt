@@ -1,0 +1,17 @@
+# Backend - Lambda Analytics Dashboard
+Django==4.2.13
+djangorestframework==3.15.1
+djangorestframework-simplejwt==5.3.1
+django-filter==24.2
+django-cors-headers==4.3.1
+drf-spectacular==0.27.2
+django-redis==5.4.0
+psycopg2-binary==2.9.9
+gunicorn==22.0.0
+whitenoise==6.7.0
+
+# Dev / Testing
+pytest==8.2.2
+pytest-django==4.8.0
+pytest-cov==5.0.0
+factory-boy==3.3.0
