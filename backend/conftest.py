@@ -1,14 +1,8 @@
-# conftest.py
-# Configuración global de pytest para el proyecto Django.
-# Debe estar en la raíz del directorio backend/.
-
-import django
 import pytest
 from django.conf import settings
 
 
 def pytest_configure(config):
-    """Configura Django antes de que pytest cargue los tests."""
     settings.configure(
         DATABASES={
             "default": {
@@ -39,8 +33,7 @@ def pytest_configure(config):
             "PAGE_SIZE": 10,
         },
         ROOT_URLCONF="config.urls",
-        DEFAULT_AUTO_FIELD="django.db.models.BigAutoField",
-        SECRET_KEY="test-secret-key-not-for-production",
+        SECRET_KEY="test-secret-key",
         USE_TZ=True,
         TIME_ZONE="America/Bogota",
         CACHES={
